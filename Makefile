@@ -1,6 +1,14 @@
-obj-m += as5600.o
+KERNELDIR ?= /lib/modules/$(shell uname -r)/build
+SRCDIR := $(shell pwd)/src
+OBJDIR := $(shell pwd)/obj
 
-all:
-	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+default:
+	@echo "Building module in $(OBJDIR)..."
+	@mkdir -p $(OBJDIR)
+	$(MAKE) -C $(KERNELDIR) M=$(SRCDIR) MO=$(OBJDIR) modules
 clean:
-	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+	@echo "Cleaning build artifacts..."
+	$(MAKE) -C $(KERNELDIR) M=$(SRCDIR) MO=$(OBJDIR) clean
+	rmdir $(OBJDIR) 2>/dev/null || true
+
+.PHONY: default clean
