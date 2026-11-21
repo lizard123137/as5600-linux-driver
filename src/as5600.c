@@ -5,29 +5,27 @@
 #include <linux/regmap.h>
 
 #include <linux/iio/iio.h>
+#include <linux/iio/sysfs.h>
 
 /* Configuration registers */
 #define AS5600_REG_ZMCO		0x00
-#define AS5600_REG_ZPOS1	0x01
-#define AS5600_REG_ZPOS2	0x02
-#define AS5600_REG_MPOS1	0x03
-#define AS5600_REG_MPOS2	0x04
-#define AS5600_REG_MANG1	0x05
-#define AS5600_REG_MANG2	0x06
-#define AS5600_REG_CONF1	0x07
-#define AS5600_REG_CONF2	0x08
+#define AS5600_REG_ZPOS		0x01
+#define AS5600_REG_MPOS		0x03
+#define AS5600_REG_MANG		0x05
+#define AS5600_REG_CONF		0x07
 
 /* Output registers */
-#define AS5600_REG_RAW_ANGLE1	0x0C
-#define AS5600_REG_RAW_ANGLE2	0x0D
-#define AS5600_REG_ANGLE1	0x0E
-#define AS5600_REG_ANGLE2	0x0F
+#define AS5600_REG_RAW_ANGLE	0x0C
+#define AS5600_REG_ANGLE	0x0E
 
 /* Status registers */
 #define AS5600_REG_STATUS	0x0B
 #define AS5600_REG_AGC		0x1A
-#define AS5600_REG_MAGNITUDE1	0x1B
-#define AS5600_REG_MAGNITUDE2	0x1C
+#define AS5600_REG_MAGNITUDE	0x1B
+
+#define AS5600_STATUS_MH	BIT(3)
+#define AS5600_STATUS_ML	BIT(4)
+#define AS5600_STATUS_MD	BIT(5)
 
 /* TODO implement burn command at adress 0xFF */
 
@@ -35,6 +33,7 @@
 
 struct as5600_data {
 	struct regmap *regmap;
+	struct mutex lock;
 };
 
 static const struct iio_chan_spec as5600_channels[] = {
@@ -53,23 +52,72 @@ static int as5600_read_raw(struct iio_dev *indio_dev,
 {
 	struct as5600_data *data = iio_priv(indio_dev);
 	int ret;
-	u8 buf[2];
 
 	switch (mask) {
 	case IIO_CHAN_INFO_RAW:
-		ret = regmap_bulk_read(data->regmap, AS5600_REG_RAW_ANGLE1, buf, sizeof(buf));
-		if (ret < 0)
+		uint16_t angle;
+
+		mutex_lock(&data->lock);
+		ret = regmap_bulk_read(data->regmap, AS5600_REG_RAW_ANGLE, &angle, sizeof(angle));
+		mutex_unlock(&data->lock);
+		if (ret)
 			return ret;
 
-		*val = buf[0] << 8 | buf[1];
+		*val = angle;
 		return IIO_VAL_INT;
 	default:
 		return -EINVAL;
 	}
 }
 
-/* TODO use iio for interacting with userspace */
+static ssize_t as5600_status_show(struct device *dev,
+				  struct device_attribute *attr,
+				  char *buf)
+{
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct as5600_data *data = iio_priv(indio_dev);
+	struct iio_dev_attr *iio_attr = to_iio_dev_attr(attr);
+	int ret, status;
+
+	ret = regmap_read(data->regmap, AS5600_REG_STATUS, &status);
+	if (ret)
+		return ret;
+
+	/* TODO look through kernel sources to double check this is ok */
+	return sysfs_emit(buf, "%u\n", !!(status & iio_attr->address));
+}
+
+static IIO_DEVICE_ATTR(magnet_too_strong,
+		       0444,
+		       as5600_status_show,
+		       NULL,
+		       AS5600_STATUS_MH);
+
+static IIO_DEVICE_ATTR(magnet_too_weak,
+		       0444,
+		       as5600_status_show,
+		       NULL,
+		       AS5600_STATUS_ML);
+
+static IIO_DEVICE_ATTR(magnet_detected,
+		       0444,
+		       as5600_status_show,
+		       NULL,
+		       AS5600_STATUS_MD);
+
+static struct attribute *as5600_attributes[] = {
+	&iio_dev_attr_magnet_too_strong.dev_attr.attr,
+	&iio_dev_attr_magnet_too_weak.dev_attr.attr,
+	&iio_dev_attr_magnet_detected.dev_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group as5600_attribute_group = {
+	.attrs = as5600_attributes,
+};
+
 static const struct iio_info as5600_info = {
+	.attrs 			= &as5600_attribute_group,
 	.read_raw		= as5600_read_raw,
 	//.write_raw		=
 	//.read_avail		=
@@ -79,10 +127,8 @@ static const struct iio_info as5600_info = {
 static const struct regmap_config as5600_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
-	/* TODO */
+	.max_register = 0xFF,
 };
-
-/* Use regmap_bulk_read for reading the 12 bit registers */
 
 static int as5600_probe(struct i2c_client *client)
 {
@@ -103,6 +149,7 @@ static int as5600_probe(struct i2c_client *client)
 
 	data = iio_priv(iio);
 	data->regmap = map;
+	mutex_init(&data->lock);
 
 	iio->name = "as5600";
 	iio->info = &as5600_info;
