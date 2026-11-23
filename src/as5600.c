@@ -65,8 +65,7 @@ static const struct reg_field as5600_reg_fields[] = {
  * implement burn command at address 0xFF
  * somehow secure the burn command from being issued by accident
  *
- * Maybe use a write only attribute with super user permissions only (0200).
- * Add it at the root of the sys iio interface, at the same level as the groups.
+ * Maybe use a write only iio event attribute with super user permissions only (0200).
  */
 
 struct as5600_data {
@@ -139,7 +138,7 @@ static ssize_t as5600_reg8_write(struct device *dev,
         uint8_t value;
         int ret;
 
-        ret = kstrtou8(buf, &value);
+        ret = kstrtou8(buf, 0, &value);
         if (ret)
                 return ret;
 
@@ -178,13 +177,13 @@ static ssize_t as5600_reg16_write(struct device *dev,
         uint16_t value;
         int ret;
 
-        ret = kstrtou8(buf, &value);
+        ret = kstrtou16(buf, 0, &value);
         if (ret)
                 return ret;
 
         ret = regmap_bulk_write(data->regmap,
                                 iio_attr->address,
-                                value
+                                &value,
                                 sizeof(value));
         return ret ? ret : len;
 }
@@ -214,9 +213,10 @@ static ssize_t as5600_regmap_field_write(struct device *dev,
         struct iio_dev *indio_dev = dev_to_iio_dev(dev);
         struct as5600_data *data = iio_priv(indio_dev);
         struct iio_dev_attr *iio_attr = to_iio_dev_attr(attr);
+	uint8_t value;
         int ret;
 
-        ret = kstrtou8(buf, &value);
+        ret = kstrtou8(buf, 0, &value);
         if (ret)
                 return ret;
 
@@ -279,25 +279,6 @@ static IIO_DEVICE_ATTR(conf_watchdog,
                        as5600_regmap_field_write,
                        AS5600_FIELD_CONF_WD);
 
-static struct attribute *as5600_config_attributes[] = {
-        &iio_dev_attr_start_position.dev_attr.attr,
-        &iio_dev_attr_stop_position.dev_attr.attr,
-        &iio_dev_attr_max_angle.dev_attr.attr,
-
-        &iio_dev_attr_conf_power_mode.dev_attr.attr,
-        &iio_dev_attr_conf_hysteresis.dev_attr.attr,
-        &iio_dev_attr_conf_output_stage.dev_attr.attr,
-        &iio_dev_attr_conf_pwm_freq.dev_attr.attr,
-        &iio_dev_attr_conf_slow_filter.dev_attr.attr,
-        &iio_dev_attr_conf_fast_filter.dev_attr.attr,
-        &iio_dev_attr_conf_watchdog.dev_attr.attr,
-}
-
-static const struct attribute_group as5600_config_group = {
-        .name = "config",
-        .attrs = as5600_config_attributes,
-};
-
 /* Status attributes */
 static IIO_DEVICE_ATTR(magnet_too_strong,
                        0444,
@@ -331,7 +312,19 @@ static IIO_DEVICE_ATTR(burn_counter,
                        NULL,
                        AS5600_REG_ZMCO);
 
-static struct attribute *as5600_status_attributes[] = {
+static struct attribute *as5600_attributes[] = {
+        &iio_dev_attr_start_position.dev_attr.attr,
+        &iio_dev_attr_stop_position.dev_attr.attr,
+        &iio_dev_attr_max_angle.dev_attr.attr,
+
+        &iio_dev_attr_conf_power_mode.dev_attr.attr,
+        &iio_dev_attr_conf_hysteresis.dev_attr.attr,
+        &iio_dev_attr_conf_output_stage.dev_attr.attr,
+        &iio_dev_attr_conf_pwm_freq.dev_attr.attr,
+        &iio_dev_attr_conf_slow_filter.dev_attr.attr,
+        &iio_dev_attr_conf_fast_filter.dev_attr.attr,
+        &iio_dev_attr_conf_watchdog.dev_attr.attr,
+
         &iio_dev_attr_magnet_too_strong.dev_attr.attr,
         &iio_dev_attr_magnet_too_weak.dev_attr.attr,
         &iio_dev_attr_magnet_detected.dev_attr.attr,
@@ -342,15 +335,8 @@ static struct attribute *as5600_status_attributes[] = {
         NULL,
 };
 
-static const struct attribute_group as5600_config_group = {
-        .name = "config",
-        .attrs = as5600_status_attributes,
-};
-
-static const struct attribute_group *as5600_attribute_groups[] = {
-        &as5600_config_group,
-        &as5600_status_group,
-        NULL,
+static const struct attribute_group as5600_attribute_group = {
+	.attrs			= as5600_attributes,
 };
 
 static const struct iio_info as5600_info = {

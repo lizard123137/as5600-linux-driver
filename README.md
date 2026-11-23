@@ -36,6 +36,9 @@ dtc -I dts -o as5600.dtbo as5600-overlay.dts
 ### Insertion
 Inserting the driver and its overlay:
 ``` shell
+sudo modprobe regmap-i2c
+sudo modprobe iio_hwmon
+
 sudo insmod obj/as5600.ko
 sudo dtoverlay as5600.dtbo
 ```
