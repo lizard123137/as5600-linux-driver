@@ -1,7 +1,10 @@
 # as5600-linux-driver
 
-## Work In Progress
-The implementation of this driver is not yet finished. Currently it only supports reading the raw value.
+**This driver is not finished! It implements some functionality, but it is still a work in progress.** 
+
+This project is a **Linux Driver** for a **Magnetic Contactless Potentiometer** called the **AS5600**.
+
+## Userspace Interface
 
 The driver uses the `IIO` subsystem for its userspace interaction.
 
@@ -10,18 +13,16 @@ The device userspace interface is available under:
 /sys/bus/iio/<device_name>/
 ```
 
-The available `IIO` attributes are:
-- `magnet_too_strong`
-- `magnet_too_weak`
-- `magnet_detected`
+Its properties can be viewed using the provided `test.py` script.
+The source code of that script also serves as a good example of how to read the device data.
 
 ## Build
 This section describes the process of building and inserting the driver and its devicetree overlay.
 
-**This driver was tested on an a `Raspberry Pi5`, so your devicetree overlay might need to be different.**
+**This driver was tested on a `Raspberry Pi5`, so your devicetree overlay might need to be different.**
 
 ### Dependencies
-Before compiling the driver we need to install its dependencies:
+Before compiling the driver, we need to install its dependencies:
 ``` shell
 sudo apt install linux-headers-$(uname -r)
 ```
