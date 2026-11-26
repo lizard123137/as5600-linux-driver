@@ -3,7 +3,8 @@ import curses
 HEADER_PADDING = 50
 
 outputs = {
-        "out_angle_raw" : "/sys/bus/iio/devices/iio:device0/out_angl_raw",
+        "in_angle_raw" : "/sys/bus/iio/devices/iio:device0/in_angl_raw",
+        "in_angle_input" : "/sys/bus/iio/devices/iio:device0/in_angl_input",
 }
 
 attributes = {

@@ -1,4 +1,5 @@
 #include <linux/bitfield.h>
+#include <linux/math.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/mod_devicetable.h>
@@ -71,14 +72,13 @@ static const struct reg_field as5600_reg_fields[] = {
 struct as5600_data {
         struct regmap *regmap;
         struct regmap_field *regmap_fields[AS5600_FIELD_MAX];
-        struct mutex lock;
 };
 
 static const struct iio_chan_spec as5600_channels[] = {
         {
-                .type = IIO_ANGL, /* TODO check if this type is correct */
-                .output = 1,
-                .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
+                .type = IIO_ANGL,
+                .info_mask_separate = BIT(IIO_CHAN_INFO_RAW) |
+				      BIT(IIO_CHAN_INFO_PROCESSED),
         },
 };
 
@@ -89,23 +89,35 @@ static int as5600_read_raw(struct iio_dev *indio_dev,
                            long mask)
 {
         struct as5600_data *data = iio_priv(indio_dev);
+        u8 buf[2];
+	u32 angle_urad;
         int ret;
 
         switch (mask) {
         case IIO_CHAN_INFO_RAW:
-                uint16_t angle;
-
-                mutex_lock(&data->lock);
                 ret = regmap_bulk_read(data->regmap,
                                        AS5600_REG_RAW_ANGLE,
-                                       &angle,
-                                       sizeof(angle));
-                mutex_unlock(&data->lock);
+                                       buf,
+                                       sizeof(buf));
                 if (ret)
-                        return ret;
+			return ret;
 
-                *val = angle;
+                *val = ((buf[0] & 0x0F) << 8) | buf[1];
                 return IIO_VAL_INT;
+	case IIO_CHAN_INFO_PROCESSED:
+         	ret = regmap_bulk_read(data->regmap,
+                                       AS5600_REG_ANGLE,
+                                       buf,
+                                       sizeof(buf));
+                if (ret)
+			return ret;
+
+		angle_urad = DIV_ROUND_CLOSEST((u64)(((buf[0] & 0x0F) << 8) | buf[1])
+					       * 6283185, 4096);
+
+                *val = angle_urad / 1000000;
+		*val2 = angle_urad % 1000000;
+                return IIO_VAL_INT_PLUS_MICRO;
         default:
                 return -EINVAL;
         }
@@ -118,7 +130,8 @@ static ssize_t as5600_reg8_show(struct device *dev,
         struct iio_dev *indio_dev = dev_to_iio_dev(dev);
         struct as5600_data *data = iio_priv(indio_dev);
         struct iio_dev_attr *iio_attr = to_iio_dev_attr(attr);
-        int ret, value;
+	unsigned int value;
+        int ret;
 
         ret = regmap_read(data->regmap, iio_attr->address, &value);
         if (ret)
@@ -135,7 +148,7 @@ static ssize_t as5600_reg8_write(struct device *dev,
         struct iio_dev *indio_dev = dev_to_iio_dev(dev);
         struct as5600_data *data = iio_priv(indio_dev);
         struct iio_dev_attr *iio_attr = to_iio_dev_attr(attr);
-        uint8_t value;
+        u8 value;
         int ret;
 
         ret = kstrtou8(buf, 0, &value);
@@ -153,17 +166,17 @@ static ssize_t as5600_reg16_show(struct device *dev,
         struct iio_dev *indio_dev = dev_to_iio_dev(dev);
         struct as5600_data *data = iio_priv(indio_dev);
         struct iio_dev_attr *iio_attr = to_iio_dev_attr(attr);
-        uint16_t value;
+        u8 temp[2];
         int ret;
 
         ret = regmap_bulk_read(data->regmap,
                                iio_attr->address,
-                               &value,
-                               sizeof(value));
+                               temp,
+                               sizeof(temp));
         if (ret)
                 return ret;
 
-        return sysfs_emit(buf, "%u\n", value);
+        return sysfs_emit(buf, "%u\n", ((temp[0] & 0x0F) << 8) | temp[1]);
 }
 
 static ssize_t as5600_reg16_write(struct device *dev,
@@ -174,17 +187,25 @@ static ssize_t as5600_reg16_write(struct device *dev,
         struct iio_dev *indio_dev = dev_to_iio_dev(dev);
         struct as5600_data *data = iio_priv(indio_dev);
         struct iio_dev_attr *iio_attr = to_iio_dev_attr(attr);
-        uint16_t value;
+	u16 value;
+	u8 temp[2];
         int ret;
 
         ret = kstrtou16(buf, 0, &value);
         if (ret)
                 return ret;
 
+	if (value > GENMASK(11, 0))
+		return -EINVAL;
+
+	temp[0] = (value >> 8) & 0x0F;
+	temp[1] = value & 0xFF;
+
         ret = regmap_bulk_write(data->regmap,
                                 iio_attr->address,
-                                &value,
-                                sizeof(value));
+                                temp,
+                                sizeof(temp));
+
         return ret ? ret : len;
 }
 
@@ -225,7 +246,6 @@ static ssize_t as5600_regmap_field_write(struct device *dev,
         return ret ? ret : len;
 }
 
-// TODO use stat.h permission macros
 /* Configuration attributes */
 static IIO_DEVICE_ATTR(start_position,
                        0644,
@@ -312,6 +332,7 @@ static IIO_DEVICE_ATTR(burn_counter,
                        NULL,
                        AS5600_REG_ZMCO);
 
+/* TODO add support for DIR gpio */
 static struct attribute *as5600_attributes[] = {
         &iio_dev_attr_start_position.dev_attr.attr,
         &iio_dev_attr_stop_position.dev_attr.attr,
@@ -380,8 +401,6 @@ static int as5600_probe(struct i2c_client *client)
                 data->regmap_fields[i] = field;
         }
 
-        mutex_init(&data->lock);
-
         iio->name = "as5600";
         iio->info = &as5600_info;
         iio->channels = as5600_channels;
@@ -389,6 +408,7 @@ static int as5600_probe(struct i2c_client *client)
         iio->modes = INDIO_DIRECT_MODE;
         
         /* TODO add power down action */
+	/* TODO maybe implement PM power saving */
 
         return devm_iio_device_register(dev, iio);
 }
